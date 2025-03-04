@@ -12,13 +12,12 @@ import (
 )
 
 var (
-	storageURI       = flag.String("myGaruStorageURI", "https://segments.mygaru.com/upload/", "Segment API upload endpoint")
+	storageURI       = flag.String("cloudStorageURI", "https://cloud.mgaru.dev/segment/upload", "Segment API upload endpoint")
 	storageSecretKey = flag.String("myGaruSecretKey", "", "Per client secret authentication key")
 	filePath         = flag.String("file", "", "CSV File for uploading")
 )
 
 func main() {
-
 	flag.Parse()
 
 	st := time.Now()
@@ -47,10 +46,16 @@ func main() {
 	fmt.Printf("\nconverting to the bloom filter, FPR = 0.001")
 
 	// create bloom filter with capacity usersTotal + 20%
-	bloom, _ := ring.Init(int(float64(len(dataset))*1.2), 0.001)
+	n := uint32(float64(len(dataset)) * 1.2)
+
+	bloom, _ := ring.Init(int(n), 0.001)
 	for i := 0; i < len(dataset); i++ {
 		bloom.Add([]byte(dataset[i]))
 	}
+
+	b := make([]byte, 8)
+
+	AppendUint32ToBin(b[:0], n)
 
 	bloomBinFormat, err := bloom.MarshalBinary()
 	if nil != err {
@@ -58,13 +63,16 @@ func main() {
 		return
 	}
 
+	b = append(b, bloomBinFormat...)
+
+	fmt.Printf("\nbloom filter capacity %d", n)
 	fmt.Printf("\nbloom filter size %d bytes", len(bloomBinFormat))
 	fmt.Printf("\nsending data to the myGaruStorageURI: %q", *storageURI)
 
 	req := fasthttp.AcquireRequest()
 	req.Header.SetMethod("POST")
 	req.SetRequestURI(fmt.Sprintf("%s?key=%s&filename=%q", *storageURI, *storageSecretKey, file.Name()))
-	req.SetBody(bloomBinFormat)
+	req.SetBody(b)
 
 	res := fasthttp.AcquireResponse()
 	err = fasthttp.DoTimeout(req, res, time.Minute*10)
@@ -79,5 +87,8 @@ func main() {
 	}
 
 	fmt.Printf("\nsuccess! took: %s", time.Now().Sub(st))
+}
 
+func AppendUint32ToBin(dst []byte, v uint32) []byte {
+	return append(dst, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
 }
